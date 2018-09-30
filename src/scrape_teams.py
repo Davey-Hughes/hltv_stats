@@ -14,13 +14,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import sys
 import threading
 import multiprocessing
 import subprocess
 import queue
 import datetime
-import re
+import argparse
 
 from bs4 import BeautifulSoup
 import psycopg2
@@ -33,6 +32,8 @@ teams = dict()
 teams_lock = threading.Lock()
 
 dates_queue = queue.Queue()
+
+args = None
 
 # human readable mapping from aligned dates to actual dates in hltv
 dates_map = {
@@ -92,7 +93,7 @@ def process_page(date, soup):
             }
         )['href']
 
-        team_id = href.split('/')[2]
+        hltv_id = href.split('/')[2]
 
         if name not in teams:
             teams[name] = dict()
@@ -101,7 +102,7 @@ def process_page(date, soup):
             'rank': rank,
             'points': points,
             'href': href,
-            'team_id': team_id
+            'hltv_id': hltv_id
         }
 
     teams_lock.release()
@@ -123,37 +124,101 @@ def get_page_soup(date):
 
 
 def create_tables(cur):
+    # create ranks table if not exists
     cur.execute('SELECT to_regclass(%s)', ('public.ranks',))
     if cur.fetchone() != ('ranks',):
-        cur.execute('CREATE TABLE ranks (date date, team varchar, rank int, points int, PRIMARY KEY(date, team))')
+        cur.execute(
+            'CREATE TABLE ranks (\
+                date date,\
+                team varchar,\
+                rank int,\
+                points int,\
+                PRIMARY KEY(date, team)\
+            )'
+        )
+
+    # create teams table if not exists
+    cur.execute('SELECT to_regclass(%s)', ('public.teams',))
+    if cur.fetchone() != ('teams',):
+        cur.execute(
+            'CREATE TABLE teams (\
+                hltv_id integer PRIMARY KEY,\
+                team varchar\
+            )'
+        )
 
 
-def insert_ranks(cur, teams):
+def insert_data(cur, teams):
     for team in teams:
         for date in teams[team]:
             row = teams[team][date]
-            cur.execute(
-                'INSERT INTO public.ranks VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING',
-                (date.isoformat(), team, row['rank'], row['points'],)
-            )
+
+            if args.force_update:
+                cur.execute(
+                    'INSERT INTO public.ranks VALUES (%s, %s, %s, %s)\
+                        ON CONFLICT (date, team) DO UPDATE \
+                        SET date = excluded.date,\
+                            team = excluded.team,\
+                            rank = excluded.rank,\
+                            points = excluded.points',
+                    (date.isoformat(), team, row['rank'], row['points'])
+                )
+
+                cur.execute(
+                    'INSERT INTO public.teams VALUES (%s, %s) \
+                            ON CONFLICT (hltv_id) DO UPDATE \
+                        SET hltv_id = excluded.hltv_id,\
+                            team = excluded.team',
+                    (row['hltv_id'], team)
+                )
+            else:
+                cur.execute(
+                    'INSERT INTO public.ranks VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING',
+                    (date.isoformat(), team, row['rank'], row['points'])
+                )
+
+                cur.execute(
+                    'INSERT INTO public.teams VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                    (row['hltv_id'], team)
+                )
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dbname', help='name of the database to connect to')
+    parser.add_argument('--role', help='role to access this database with')
+
+    parser.add_argument(
+        '--update-all',
+        help='do not try to skip data that is already in the database',
+        action='store_true',
+        default=False
+    )
+
+    parser.add_argument(
+        '--force-update',
+        help='use scraped data for any conflicts in database',
+        action='store_true',
+        default=False
+    )
+
+    global args
+    args = parser.parse_args()
 
 
 def main():
-    if len(sys.argv) != 3:
-        print('Must include dbname and role as arguments')
-
-    dbname = sys.argv[1]
-    role = sys.argv[2]
+    parse_arguments()
 
     try:
-        conn = psycopg2.connect('dbname=%s user=%s' % (dbname, role))
-    except psycopg2.OperationalError:
+        conn = psycopg2.connect('dbname=%s user=%s' % (args.dbname, args.role))
+    except (NameError, psycopg2.OperationalError):
         print('Make sure input database and role exist!\n')
         raise
 
     cur = conn.cursor()
 
     create_tables(cur)
+    conn.commit()
 
     num_threads = multiprocessing.cpu_count()
     threads = []
@@ -175,7 +240,7 @@ def main():
     cur.execute('SELECT MAX(date) FROM ranks')
     latest = cur.fetchone()[0]
 
-    if latest is not None:
+    if not args.update_all and latest is not None:
         index = dates.index(latest) + 1
     else:
         index = 0
@@ -200,7 +265,7 @@ def main():
     for t in threads:
         t.join()
 
-    insert_ranks(cur, teams)
+    insert_data(cur, teams)
 
     conn.commit()
     cur.close()
