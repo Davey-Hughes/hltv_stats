@@ -1,4 +1,4 @@
-# Scrape all teams from the HLTV world rankings
+# Scrape teams from the HLTV world rankings
 # Copyright (C) 2018  David Hughes
 
 # This program is free software: you can redistribute it and/or modify
@@ -155,7 +155,7 @@ def insert_data(cur, teams):
 
             if args.force_update:
                 cur.execute(
-                    'INSERT INTO public.ranks VALUES (%s, %s, %s, %s)\
+                    'INSERT INTO public.ranks VALUES (%s, %s, %s, %s) \
                         ON CONFLICT (date, team) DO UPDATE \
                         SET date = excluded.date,\
                             team = excluded.team,\
@@ -220,9 +220,6 @@ def main():
     create_tables(cur)
     conn.commit()
 
-    num_threads = multiprocessing.cpu_count()
-    threads = []
-
     prev = datetime.date.fromisoformat('2015-09-28')
     end = datetime.date.today()
 
@@ -247,6 +244,9 @@ def main():
 
     for date in dates[index:]:
         dates_queue.put(date)
+
+    num_threads = multiprocessing.cpu_count()
+    threads = []
 
     # launch threads
     for i in range(num_threads):
