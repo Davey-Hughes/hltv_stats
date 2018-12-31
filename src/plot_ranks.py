@@ -120,7 +120,7 @@ def plot_teams(cur):
         # ticks start at 1 and go by 5s
         layout = go.Layout(
             yaxis=dict(
-                range=[31, 1],
+                range=[31, 0],
                 tickvals=list(range(1, 30, 5)),
                 zeroline=False
             )
