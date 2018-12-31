@@ -45,12 +45,12 @@ def plot_teams(cur):
     teams_except_recent = \
         set([name for _, name, _ in cur.fetchall()]) - set(teams_recent_ranking)
 
-    teams = teams_recent_ranking + sorted(teams_except_recent)
+    teams = teams_recent_ranking + sorted(teams_except_recent, key=lambda s: s.casefold())
 
     data_ranks = []
     data_points = []
 
-    for team in teams:
+    for i, team in enumerate(teams):
         cur.execute('SELECT * FROM ranks WHERE team=(%s) ORDER BY date', (team,))
         records = cur.fetchall()
 
@@ -82,7 +82,7 @@ def plot_teams(cur):
             team_plot = go.Scatter(
                 x=xs,
                 y=ys,
-                name=team,
+                name=team + ' (' + str(i + 1) + ')' if i < 30 else team,
                 connectgaps=False,
                 line=dict(
                     color=team_color
@@ -106,7 +106,7 @@ def plot_teams(cur):
             team_plot = go.Scatter(
                 x=xs,
                 y=ys,
-                name=team,
+                name=team + ' (' + str(i + 1) + ')' if i < 30 else team,
                 connectgaps=False,
                 line=dict(
                     color=team_color
