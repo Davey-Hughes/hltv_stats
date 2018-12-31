@@ -27,7 +27,7 @@ import common
 # globals
 args = []
 
-plot_path = '../plots/'
+plot_path = common.ROOT_DIR + '/plots/'
 
 
 # make plotly html files from the rankings

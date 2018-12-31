@@ -29,7 +29,7 @@ import common
 
 
 # globals
-logos_path = '../logos/'
+logos_path = common.ROOT_DIR + '/logos/'
 
 base_url = 'https://www.hltv.org/ranking/teams/'
 dates = []
