@@ -22,6 +22,8 @@ import argparse
 
 from bs4 import BeautifulSoup
 import psycopg2
+import common
+
 
 players = dict()
 players_lock = threading.Lock()
@@ -142,11 +144,7 @@ def parse_arguments():
 def main():
     parse_arguments()
 
-    try:
-        conn = psycopg2.connect('dbname=%s user=%s' % (args.dbname, args.role))
-    except (NameError, psycopg2.OperationalError):
-        print('Make sure input database and role exist!\n')
-        raise
+    conn = common.connect_to_db(args)
 
     cur = conn.cursor()
 

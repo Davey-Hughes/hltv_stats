@@ -14,21 +14,28 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
+import shutil
 import threading
 import multiprocessing
 import subprocess
 import queue
 import datetime
 import argparse
+import math
 
 from bs4 import BeautifulSoup
-import psycopg2
+import common
+
 
 # globals
+logos_path = '../logos/'
+
 base_url = 'https://www.hltv.org/ranking/teams/'
 dates = []
 
 teams = dict()
+team_colors = dict()
 teams_lock = threading.Lock()
 
 dates_queue = queue.Queue()
@@ -78,11 +85,64 @@ def thread_work():
         dates_queue.task_done()
 
 
+def dominant_color_url(url):
+    num_colors = 5
+
+    if not os.path.exists(logos_path):
+        os.makedirs(logos_path)
+
+    filepath = logos_path + 'temp.svg'
+
+    subprocess.run(['wget', url, '-O', filepath],
+                   stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+
+    info = subprocess.run([
+            'convert', filepath, '+dither', '-colors', str(num_colors),
+            '-format', '%c', '-depth', '8', 'histogram:info:',
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL)
+
+    colors = []
+
+    for line in info.stdout.split(b'\n'):
+        lst = line.decode('utf-8').strip().split(': ')
+        if lst != ['']:
+            colors.append(lst)
+
+    colors = list(filter(lambda x: x[1].split(' ')[-1] != 'white', colors))
+
+    color_ranks = [int(x[0]) for x in colors]
+    total_pixels = sum(color_ranks)
+
+    # filter out any colors that appear less than 5% of the time
+    colors = list(filter(lambda x: int(x[0]) > total_pixels * 0.05, colors))
+
+    # extract RGB values from hex color string
+    hex_colors = [color[1].split(' ')[-2][1:-2] for color in colors]
+    split_hex_colors = [[int(c[i:i + 2], 16) for i in range(0, 6, 2)] for c in hex_colors]
+
+    dist_mins = []
+    # find minimum of distances to black and white for each color
+    for color in split_hex_colors:
+        bdist = math.sqrt(color[0] ** 2 + color[1] ** 2 + color[2] ** 2)
+        wdist = math.sqrt((255 - color[0]) ** 2 + (255 - color[1]) ** 2 + (255 - color[2]) ** 2)
+
+        if wdist < 60:
+            dist_mins.append(0)
+        else:
+            dist_mins.append(min(bdist, wdist))
+
+    index_max = max(range(len(dist_mins)), key=dist_mins.__getitem__)
+
+    return '#' + hex_colors[index_max]
+
+
 # parse page for team name, rank, and points
 def process_page(date, soup):
     teams_div = soup.select('div.ranked-team.standard-box')
 
-    teams_lock.acquire()
     for team in teams_div:
         name = team.find(class_='name').text
         rank = int(team.find(class_='position').text.strip('#'))
@@ -95,17 +155,20 @@ def process_page(date, soup):
 
         hltv_id = href.split('/')[2]
 
+        logo_url = team.find(class_='team-logo').find('img')['src']
+
+        teams_lock.acquire()
         if name not in teams:
             teams[name] = dict()
 
         teams[name][date] = {
             'rank': rank,
             'points': points,
-            'href': href,
-            'hltv_id': hltv_id
+            'href': href
         }
-
-    teams_lock.release()
+        teams[name]['logo_url'] = logo_url
+        teams[name]['hltv_id'] = hltv_id
+        teams_lock.release()
 
 
 # fetch page source for a given date
@@ -143,14 +206,33 @@ def create_tables(cur):
         cur.execute(
             'CREATE TABLE teams (\
                 hltv_id integer PRIMARY KEY,\
-                team varchar\
+                team varchar,\
+                color varchar\
             )'
         )
 
 
 def insert_data(cur, teams):
     for team in teams:
+        if args.force_update:
+            cur.execute(
+                'INSERT INTO public.teams VALUES (%s, %s, %s) \
+                        ON CONFLICT (hltv_id) DO UPDATE \
+                    SET hltv_id = excluded.hltv_id,\
+                        team = excluded.team,\
+                        color = excluded.color',
+                (teams[team]['hltv_id'], team, teams[team]['color'])
+            )
+        else:
+            cur.execute(
+                'INSERT INTO public.teams VALUES (%s, %s, %s) ON CONFLICT DO NOTHING',
+                (teams[team]['hltv_id'], team, teams[team]['color'])
+            )
+
         for date in teams[team]:
+            if type(date) != datetime.date:
+                continue
+
             row = teams[team][date]
 
             if args.force_update:
@@ -164,22 +246,10 @@ def insert_data(cur, teams):
                     (date.isoformat(), team, row['rank'], row['points'])
                 )
 
-                cur.execute(
-                    'INSERT INTO public.teams VALUES (%s, %s) \
-                            ON CONFLICT (hltv_id) DO UPDATE \
-                        SET hltv_id = excluded.hltv_id,\
-                            team = excluded.team',
-                    (row['hltv_id'], team)
-                )
             else:
                 cur.execute(
                     'INSERT INTO public.ranks VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING',
                     (date.isoformat(), team, row['rank'], row['points'])
-                )
-
-                cur.execute(
-                    'INSERT INTO public.teams VALUES (%s, %s) ON CONFLICT DO NOTHING',
-                    (row['hltv_id'], team)
                 )
 
 
@@ -209,11 +279,7 @@ def parse_arguments():
 def main():
     parse_arguments()
 
-    try:
-        conn = psycopg2.connect('dbname=%s user=%s' % (args.dbname, args.role))
-    except (NameError, psycopg2.OperationalError):
-        print('Make sure input database and role exist!\n')
-        raise
+    conn = common.connect_to_db(args)
 
     cur = conn.cursor()
 
@@ -242,8 +308,13 @@ def main():
     else:
         index = 0
 
+    # i = 0
+    # index = 60
     for date in dates[index:]:
+        # if i > 10:
+            # break
         dates_queue.put(date)
+        # i += 1
 
     num_threads = multiprocessing.cpu_count()
     threads = []
@@ -264,6 +335,16 @@ def main():
     # wait for threads to finish
     for t in threads:
         t.join()
+
+    # get team colors
+    for team in teams:
+        print('Getting color for %s' % (team))
+        color = dominant_color_url(teams[team]['logo_url'])
+        teams[team]['color'] = color
+
+    # remove logos folder
+    if os.path.exists(logos_path):
+        shutil.rmtree(logos_path)
 
     insert_data(cur, teams)
 
