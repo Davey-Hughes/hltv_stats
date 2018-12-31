@@ -2,23 +2,6 @@
 
 <img src="https://media.githubusercontent.com/media/Davey-Hughes/hltv_stats/master/img/points.png" width="1000"/>
 
-## Dependencies
-`psycopg2` is used to communicate with a postgres database and can be installed
-with pip
-
-`Beautiful Soup` is used to parse the scraped HTML information and can be
-installed with pip
-
-`imagemagick` command line tools are used. On MacOS they can be installed with
-homebrew:
-
-```
-brew install imagemagick
-```
-
-Other platforms can install imagemagick similarly with their respective package
-managers.
-
 ## Usage
 ### Viewing the Plots
 The interactive plots can be downloaded and then run locally on your browser,
@@ -65,6 +48,23 @@ default.
 These plots are saved in the `project_root/plots/ranks.html` and
 `project_root/plots/points.html` and _will_ overwrite any files of the same name
 without asking first.
+
+## Dependencies
+`psycopg2` is used to communicate with a postgres database and can be installed
+with pip
+
+`Beautiful Soup` is used to parse the scraped HTML information and can be
+installed with pip
+
+`imagemagick` command line tools are used. On MacOS they can be installed with
+homebrew:
+
+```
+brew install imagemagick
+```
+
+Other platforms can install imagemagick similarly with their respective package
+managers.
 
 ## Limitations
 ### Team Continuity
